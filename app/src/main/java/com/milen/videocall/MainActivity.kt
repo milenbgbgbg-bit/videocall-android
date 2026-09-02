@@ -4,8 +4,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -50,11 +54,20 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
     private lateinit var micButton: Button
     private lateinit var cameraButton: Button
     private lateinit var statusText: TextView
+    private lateinit var joinBar: LinearLayout
+    private lateinit var controlBar: LinearLayout
 
     private var isInitiator = false
     private var micEnabled = true
     private var cameraEnabled = true
     private var inCall = false
+
+    // Auto-hide the on-screen buttons during a call so they don't block the video -
+    // tapping anywhere on the video brings them back for a few seconds.
+    private var controlsVisible = true
+    private val hideControlsHandler = Handler(Looper.getMainLooper())
+    private val hideControlsRunnable = Runnable { setControlsVisible(false) }
+    private val autoHideDelayMs = 4000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +81,8 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         micButton = findViewById(R.id.micButton)
         cameraButton = findViewById(R.id.cameraButton)
         statusText = findViewById(R.id.statusText)
+        joinBar = findViewById(R.id.joinBar)
+        controlBar = findViewById(R.id.controlBar)
 
         rootEglBase = EglBase.create()
         remoteRenderer.init(rootEglBase.eglBaseContext, null)
@@ -80,7 +95,40 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         micButton.setOnClickListener { toggleMic() }
         cameraButton.setOnClickListener { toggleCamera() }
 
+        // Tapping anywhere on the video toggles the buttons: hide them immediately
+        // if shown, or bring them back (and restart the auto-hide timer) if hidden.
+        remoteRenderer.setOnClickListener {
+            if (!inCall) return@setOnClickListener
+            if (controlsVisible) {
+                hideControlsHandler.removeCallbacks(hideControlsRunnable)
+                setControlsVisible(false)
+            } else {
+                setControlsVisible(true)
+                resetHideControlsTimer()
+            }
+        }
+
         setInCallUi(active = false)
+    }
+
+    private fun setControlsVisible(visible: Boolean) {
+        controlsVisible = visible
+        val targetAlpha = if (visible) 1f else 0f
+        for (view in listOf(controlBar, joinBar)) {
+            if (visible) view.visibility = View.VISIBLE
+            view.animate()
+                .alpha(targetAlpha)
+                .setDuration(200)
+                .withEndAction { if (!visible) view.visibility = View.INVISIBLE }
+                .start()
+        }
+    }
+
+    private fun resetHideControlsTimer() {
+        hideControlsHandler.removeCallbacks(hideControlsRunnable)
+        if (inCall) {
+            hideControlsHandler.postDelayed(hideControlsRunnable, autoHideDelayMs)
+        }
     }
 
     private fun checkPermissionsAndJoin() {
@@ -145,6 +193,7 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         statusText.text = "Свързване към сървъра..."
         setInCallUi(active = true)
         inCall = true
+        resetHideControlsTimer()
     }
 
     private fun setupAudioForCall() {
@@ -257,6 +306,11 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         cameraEnabled = true
         micButton.text = "Микрофон вкл."
         cameraButton.text = "Камера вкл."
+
+        // Stop the auto-hide timer and make sure the buttons are visible again
+        // for the next call.
+        hideControlsHandler.removeCallbacks(hideControlsRunnable)
+        setControlsVisible(true)
     }
 
     private fun setInCallUi(active: Boolean) {
@@ -269,6 +323,7 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
 
     override fun onDestroy() {
         super.onDestroy()
+        hideControlsHandler.removeCallbacksAndMessages(null)
         if (inCall) {
             try { signalingClient?.leave() } catch (e: Exception) { /* ignore */ }
             try { webRTCClient?.close() } catch (e: Exception) { /* ignore */ }
