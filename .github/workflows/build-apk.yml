@@ -21,16 +21,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ubuntu-latest runners already ship a full Android SDK with licenses
-      # pre-accepted, so no separate Android SDK setup step is needed.
+      # No gradlew wrapper is committed to this repo, so we install Gradle
+      # directly and run the plain 'gradle' command instead of './gradlew'.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+        with:
+          gradle-version: '8.7'
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
