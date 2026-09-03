@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
     private lateinit var micButton: Button
     private lateinit var cameraButton: Button
     private lateinit var statusText: TextView
+    private lateinit var statsText: TextView
     private lateinit var joinBar: LinearLayout
     private lateinit var controlBar: LinearLayout
 
@@ -81,6 +82,7 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         micButton = findViewById(R.id.micButton)
         cameraButton = findViewById(R.id.cameraButton)
         statusText = findViewById(R.id.statusText)
+        statsText = findViewById(R.id.statsText)
         joinBar = findViewById(R.id.joinBar)
         controlBar = findViewById(R.id.controlBar)
 
@@ -275,6 +277,12 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
                 PeerConnection.PeerConnectionState.CLOSED -> "Затворено"
                 else -> statusText.text
             }
+            if (state == PeerConnection.PeerConnectionState.CONNECTED) {
+                statsText.visibility = View.VISIBLE
+                webRTCClient?.startStatsPolling { summary ->
+                    runOnUiThread { statsText.text = summary }
+                }
+            }
         }
     }
 
@@ -300,6 +308,8 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         webRTCClient = null
         remoteRenderer.clearImage()
         statusText.text = "Разговорът приключи."
+        statsText.visibility = View.GONE
+        statsText.text = ""
         setInCallUi(active = false)
         inCall = false
         micEnabled = true
