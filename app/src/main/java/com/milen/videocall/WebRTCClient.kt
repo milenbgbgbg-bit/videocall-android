@@ -1,6 +1,8 @@
 package com.milen.videocall
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -71,6 +73,9 @@ class WebRTCClient(
 
     private val peerConnectionFactory: PeerConnectionFactory
     private var peerConnection: PeerConnection? = null
+
+    private val statsHandler = Handler(Looper.getMainLooper())
+    private var statsRunnable: Runnable? = null
 
     private var localVideoSource: VideoSource? = null
     private var localAudioSource: AudioSource? = null
@@ -275,7 +280,63 @@ class WebRTCClient(
         localVideoTrack?.setEnabled(enabled)
     }
 
+    /**
+     * Polls WebRTC's own connection stats every few seconds so the two of you can tell,
+     * right on screen, whether a bad call is a network problem or something else:
+     * - "директна (P2P)" vs "TURN relay": whether media is flowing straight between the
+     *   two phones or being relayed through a TURN server (relay adds distance and a
+     *   possible bottleneck if that server is congested).
+     * - loss/jitter: packets of the incoming audio (from the other phone) that were lost
+     *   or arrived late-and-uneven. High numbers here line up with "clapping"/dropped
+     *   words - that's packet loss concealment kicking in, not an audio-processing bug.
+     */
+    fun startStatsPolling(onStats: (String) -> Unit) {
+        stopStatsPolling()
+        val runnable = object : Runnable {
+            override fun run() {
+                peerConnection?.getStats { report ->
+                    val all = report.statsMap.values
+
+                    var connectionType = "?"
+                    val candidatePair = all.firstOrNull {
+                        it.type == "candidate-pair" && it.members["state"] == "succeeded" &&
+                            (it.members["nominated"] as? Boolean) == true
+                    } ?: all.firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" }
+
+                    if (candidatePair != null) {
+                        val localId = candidatePair.members["localCandidateId"] as? String
+                        val remoteId = candidatePair.members["remoteCandidateId"] as? String
+                        val localType = all.firstOrNull { it.id == localId }?.members?.get("candidateType") as? String
+                        val remoteType = all.firstOrNull { it.id == remoteId }?.members?.get("candidateType") as? String
+                        connectionType = if (localType == "relay" || remoteType == "relay") {
+                            "TURN relay"
+                        } else {
+                            "директна (P2P)"
+                        }
+                    }
+
+                    val inboundAudio = all.firstOrNull { it.type == "inbound-rtp" && it.members["kind"] == "audio" }
+                    val packetsLost = (inboundAudio?.members?.get("packetsLost") as? Number)?.toLong()
+                    val jitter = (inboundAudio?.members?.get("jitter") as? Number)?.toDouble()
+                    val packetsReceived = (inboundAudio?.members?.get("packetsReceived") as? Number)?.toLong()
+
+                    val jitterMs = if (jitter != null) "%.0f ms".format(jitter * 1000) else "?"
+                    onStats("Връзка: $connectionType | загубени: ${packetsLost ?: "?"}/${packetsReceived ?: "?"} | jitter: $jitterMs")
+                }
+                statsHandler.postDelayed(this, 3000)
+            }
+        }
+        statsRunnable = runnable
+        statsHandler.postDelayed(runnable, 1500)
+    }
+
+    fun stopStatsPolling() {
+        statsRunnable?.let { statsHandler.removeCallbacks(it) }
+        statsRunnable = null
+    }
+
     fun close() {
+        stopStatsPolling()
         try {
             videoCapturer?.stopCapture()
         } catch (e: Exception) {
