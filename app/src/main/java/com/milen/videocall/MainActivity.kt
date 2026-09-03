@@ -1,8 +1,10 @@
 package com.milen.videocall
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -134,7 +136,13 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
     }
 
     private fun checkPermissionsAndJoin() {
-        val needed = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        val needed = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        // Needed so the "call in progress" notification (see CallService) can actually
+        // show on Android 13+ - without it the foreground service still works, you just
+        // wouldn't see the notification confirming the call is protected in the background.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
         val missing = needed.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
@@ -152,8 +160,14 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-            if (granted) {
+            // Only camera + mic are essential to place the call - a denied notification
+            // permission shouldn't block it, it just means the background-call notice
+            // won't be visible.
+            val essential = setOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+            val essentialGranted = permissions.indices.all { i ->
+                permissions[i] !in essential || grantResults[i] == PackageManager.PERMISSION_GRANTED
+            }
+            if (essentialGranted) {
                 startCallFlow()
             } else {
                 Toast.makeText(this, "Нужен е достъп до камера и микрофон, за да се обадиш.", Toast.LENGTH_LONG).show()
@@ -191,6 +205,11 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         val signaling = SignalingClient(SIGNALING_SERVER_URL, this)
         signalingClient = signaling
         signaling.connectAndJoin(room)
+
+        // Start the foreground service so the call keeps running (audio, video, the
+        // signaling socket) if you switch away to check something on the phone,
+        // instead of Android suspending it like a normal background activity.
+        ContextCompat.startForegroundService(this, Intent(this, CallService::class.java))
 
         statusText.text = "Свързване към сървъра..."
         setInCallUi(active = true)
@@ -312,6 +331,7 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         statsText.text = ""
         setInCallUi(active = false)
         inCall = false
+        stopService(Intent(this, CallService::class.java))
         micEnabled = true
         cameraEnabled = true
         micButton.text = "Микрофон вкл."
@@ -337,6 +357,7 @@ class MainActivity : AppCompatActivity(), WebRTCClient.Listener, SignalingClient
         if (inCall) {
             try { signalingClient?.leave() } catch (e: Exception) { /* ignore */ }
             try { webRTCClient?.close() } catch (e: Exception) { /* ignore */ }
+            try { stopService(Intent(this, CallService::class.java)) } catch (e: Exception) { /* ignore */ }
         }
         localRenderer.release()
         remoteRenderer.release()
