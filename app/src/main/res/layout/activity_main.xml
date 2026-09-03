@@ -69,6 +69,24 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Diagnostic line: shows connection type (direct/relay) and packet loss for the
+         audio coming FROM the other phone, so a network problem can be told apart
+         from an audio-processing one without needing a computer. -->
+    <TextView
+        android:id="@+id/statsText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:textColor="#FFEB3B"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:text=""
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/statusText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Bottom control bar -->
     <LinearLayout
         android:id="@+id/controlBar"
